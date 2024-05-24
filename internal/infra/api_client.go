@@ -2,15 +2,14 @@ package infra
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"go-bitcoin-ltp/internal/domain"
-	_ "net/http"
-	_ "time"
+	"io"
+	"net/http"
 )
 
 type APIClient interface {
-	FetchLTP() ([]domain.LTP, error)
+	FetchLTP(pair string) (domain.LTP, error)
 }
 
 type apiClient struct{}
@@ -19,19 +18,30 @@ func NewAPIClient() APIClient {
 	return &apiClient{}
 }
 
-func (c *apiClient) FetchLTP() ([]domain.LTP, error) {
-	// Mock response for example purposes
-	mockResponse := `[
-        {"pair": "BTC/CHF", "amount": "49000.12"},
-        {"pair": "BTC/EUR", "amount": "50000.12"},
-        {"pair": "BTC/USD", "amount": "52000.12"}
-    ]`
+func (c *apiClient) FetchLTP(pair string) (domain.LTP, error) {
+	const UrlTemplate = "https://api.kraken.com/0/public/Ticker?pair="
+	url := UrlTemplate + pair
 
-	var ltp []domain.LTP
-	err := json.Unmarshal([]byte(mockResponse), &ltp)
+	resp, err := http.Get(url)
+	if err != nil || resp.StatusCode != 200 {
+		return domain.LTP{}, fmt.Errorf("error fetching data for %s: %w", pair, err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, errors.New(fmt.Sprintf("failed to parse LTP data %s", err.Error()))
+		return domain.LTP{}, fmt.Errorf("error reading response body for %s: %w", pair, err)
 	}
 
-	return ltp, nil
+	var response domain.Response
+	err = json.Unmarshal(body, &response)
+	if err != nil {
+		return domain.LTP{}, fmt.Errorf("error unmarshalling JSON for %s: %w", pair, err)
+	}
+
+	for key, value := range response.Result {
+		return domain.LTP{Pair: key, Amount: value.C[0]}, nil
+	}
+
+	return domain.LTP{}, fmt.Errorf("no data found for %s", pair)
 }
